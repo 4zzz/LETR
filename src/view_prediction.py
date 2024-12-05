@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+import sys
+import json
+import numpy as np
+from matplotlib import pyplot as plt
+
+if len(sys.argv) != 2:
+    print('No input file')
+    exit()
+file = sys.argv[1]
+
+def plot_lines_3D(lines, ax, color, label):
+    for i, line in enumerate(lines):
+        x1, y1, z1, x2, y2, z2 = line
+        ax.plot([x1, x2], [y1, y2], [z1, z2], color=color, marker='o', label=label if i == 0 else '')
+
+def view3D(xyz, pred_lines, target_lines):
+    img = np.moveaxis(xyz, 0, -1)
+    non_zeros = np.prod(img, axis=2) != 0
+    points = img[non_zeros]
+
+    points = points[np.random.rand(points.shape[0]) < 0.05]
+
+    #zeros = np.prod(img, axis=2) == 0
+    #img -= np.min(img)
+    #img /= np.max(img)
+    #img[zeros] = np.array([0. , 0. , 0.])
+
+    #plt.imshow(img)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    ax.scatter(points[:,0], points[:,1], points[:,2], marker='o')
+
+    plot_lines(target_lines, ax, 'g', 'annotation')
+    plot_lines(pred_lines[keep], ax, 'r', 'prediction')
+
+    plt.legend()
+    plt.show()
+
+def view2D(img, pred_lines, target_lines):
+    from PIL import Image, ImageDraw
+
+    mean = np.array([0.538, 0.494, 0.453])
+    std = np.array([0.257, 0.263, 0.273])
+
+    img = np.moveaxis(img, 0, -1)
+
+    img = std * img + mean
+    img = np.clip(img, 0, 1)
+
+
+    pil_img = Image.fromarray(np.uint8(img*255))
+
+    #pil_img = Image.fromarray(np.uint8(img*255))
+    draw = ImageDraw.Draw(pil_img)
+
+    width = img.shape[1]
+    height = img.shape[0]
+
+    for line in target_lines:
+        x1, y1, x2, y2 = line
+        draw.line((x1*width, y1*height, x2*width, y2*height), fill=(0, 255, 0), width=2)
+
+    for line in pred_lines:
+        x1, y1, x2, y2 = line
+        draw.line((x1*width, y1*height, x2*width, y2*height), fill=(255, 0, 0), width=2)
+
+    plt.imshow(np.asarray(pil_img))
+    plt.show()
+
+with open(file, 'r') as file:
+    data = json.load(file)
+
+xyz = np.array(data['xyz'])
+
+pred_scores = np.array(data['prediction']['scores'])
+pred_lines = np.array(data['prediction']['lines'])
+target_lines = data['targets']['lines']
+keep = np.array(np.argsort(pred_scores)[::-1][:80])
+print(f'displaying {len(keep)} lines with scores: ', pred_scores[keep])
+pred_lines = pred_lines[keep]
+
+print(pred_lines.shape)
+if pred_lines.shape[1] == 4:
+    view2D(xyz, pred_lines, target_lines)
+else:
+    view3D(xyz, pred_lines, target_lines)

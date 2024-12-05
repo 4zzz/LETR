@@ -14,6 +14,87 @@ import numpy as np
 import torch
 import datetime
 import util.misc as utils
+import torch.nn.functional as F
+from pathlib import Path
+
+
+def save_prediction_data(samples, outputs, targets, filename, criterion=None, index=0):
+    out_logits, out_line = outputs['pred_logits'][index].detach().cpu(), outputs['pred_lines'][index].detach().cpu()
+
+    prob = F.softmax(out_logits, -1)
+    scores, labels = prob[..., :-1].max(-1)
+
+    lines = out_line#.view(out_line.shape[0]//6, 6)
+
+    print('targets', targets[index])
+
+    xyz, _ = samples.decompose()
+
+    data = {
+        'xyz': xyz[index].tolist(),
+        'targets': {key:value.tolist() for (key,value) in targets[index].items()},
+        #'loss': {} if criterion is None else criterion(torch.tensor([]), torch.tensor([]))
+        'prediction': {
+            'scores': scores.tolist(),
+            'labels': labels.tolist(),
+            'lines': lines.tolist(),
+        }
+    }
+
+    #print('data', data)
+
+    with open(filename, 'w') as f:
+        json.dump(data, f)
+
+def save_prediction_visualization(samples, outputs, filename, index=0):
+    # find lines
+    out_logits, out_line = outputs['pred_logits'][index], outputs['pred_lines'][index]
+    prob = F.softmax(out_logits, -1)
+    scores, labels = prob[..., :-1].max(-1)
+    lines = out_line.detach().cpu()#
+    scores = scores.detach().cpu().numpy()
+    keep = np.array(np.argsort(scores)[::-1][:12])
+    lines = lines[keep]
+
+    xyz, _ = samples.decompose()
+    img = np.moveaxis(xyz[index].detach().cpu().numpy(), 0, -1)
+
+    non_zeros = np.prod(img, axis=2) != 0
+    points = img[non_zeros]
+
+    zeros = np.prod(img, axis=2) == 0
+    img -= np.min(img)
+    img /= np.max(img)
+    img[zeros] = np.array([0. , 0. , 0.])
+
+    plt.imshow(img)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    ax.scatter(points[:,0], points[:,1], points[:,2], marker='o')
+
+    for line in lines:
+        x1, y1, z1, x2, y2, z2 = line.detach().cpu().numpy()
+        ax.plot([x1, x2], [y1, y2], [z1, z2], color='r', marker='o')
+    plt.savefig(filename)
+
+
+saved_figs = 0
+def save_prediction(args, epoch, samples, outputs, targets):
+    global saved_figs
+    if args.save_prediction_probability and np.random.rand() < args.save_prediction_probability:
+        subdir = 'visualizations'
+        Path(os.path.join(args.output_dir, subdir)).mkdir(parents=True, exist_ok=True)
+        if args.save_prediction_visualization:
+            path = os.path.join(args.output_dir, subdir, 'vis-e' + str(epoch).rjust(len(str(args.epochs)), '0') + f'-f{saved_figs:03}.png')
+            print('Saving prediction visualization to', path)
+            save_prediction_visualization(samples, outputs, path)
+        if args.save_prediction_data:
+            path = os.path.join(args.output_dir, subdir, 'vis-e' + str(epoch).rjust(len(str(args.epochs)), '0') + f'-f{saved_figs:03}.json')
+            print('Saving prediction data to')
+            save_prediction_data(samples, outputs, targets, path)
+        saved_figs += 1
+
 
 def train_one_epoch(model, criterion, postprocessors, data_loader, optimizer, device, epoch, max_norm, args):
     model.train()
@@ -23,23 +104,30 @@ def train_one_epoch(model, criterion, postprocessors, data_loader, optimizer, de
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
-
     counter = 0
     torch.cuda.empty_cache()
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-        
+
         try:
             if args.LETRpost:
                 outputs, origin_indices = model(samples, postprocessors, targets, criterion)
+                save_prediction(args, epoch, samples, outputs, targets)
                 loss_dict = criterion(outputs, targets, origin_indices)
             else:
                 outputs = model(samples)
+                save_prediction(args, epoch, samples, outputs, targets)
                 loss_dict = criterion(outputs, targets)
+
+                #print('outputs:', outputs)
+                #print('targets:', targets)
+                print('pred_lines:', outputs['pred_lines'])
+                print('target_lines:', [t['lines'] for t in targets])
+
         except RuntimeError as e:
             if "out of memory" in str(e):
-                sys.exit('Out Of Memory')   
+                sys.exit('Out Of Memory')
             else:
                 raise e
             
@@ -81,11 +169,11 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
 
-    id_to_img = {}
-    f = open(os.path.join(args.coco_path, "annotations", "lines_{}2017.json".format(args.dataset)))
-    data = json.load(f)
-    for d in data['images']:
-        id_to_img[d['id']] = d['file_name'].split('.')[0]
+    #id_to_img = {}
+    #f = open(os.path.join(args.coco_path, "annotations", "lines_{}2017.json".format(args.dataset)))
+    #data = json.load(f)
+    #for d in data['images']:
+    #    id_to_img[d['id']] = d['file_name'].split('.')[0]
     counter = 0
     num_images = 0
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
@@ -145,13 +233,13 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
                 os.makedirs(args.output_dir+append_path , exist_ok=True)
                 checkpoint_path = args.output_dir+append_path+'/{}.npz'
                 curr_img_id = targets[0]['image_id'].tolist()[0]
-                np.savez(checkpoint_path.format(id_to_img[curr_img_id]),**{'lines': line, 'score':score})
+                #np.savez(checkpoint_path.format(id_to_img[curr_img_id]),**{'lines': line, 'score':score})
             elif 'data/wireframe_processed' in args.coco_path:
                 append_path = '/benchmark/benchmark_val_'+args.append_word
                 os.makedirs(args.output_dir+append_path , exist_ok=True)
                 checkpoint_path = args.output_dir+append_path+'/{:08d}.npz'
                 curr_img_id = targets[0]['image_id'].tolist()[0]
-                np.savez(checkpoint_path.format(int(id_to_img[curr_img_id])),**{'lines': line, 'score':score})
+                #np.savez(checkpoint_path.format(int(id_to_img[curr_img_id])),**{'lines': line, 'score':score})
             else:
                 assert False
         num_images +=1

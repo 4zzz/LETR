@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+import os
 import argparse
 import datetime
 import json
@@ -16,6 +17,15 @@ from datasets import build_dataset, get_coco_api_from_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
 from args import get_args_parser
+
+import json
+
+
+def save_json(file, data):
+    f = open(file, "w")
+    json.dump(data, f, indent = 6)
+    f.close()
+
 
 def main(args):
     utils.init_distributed_mode(args)
@@ -51,10 +61,13 @@ def main(args):
         },
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
+    #optimizer = torch.optim.SGD(param_dicts, lr=0.001, momentum=0.9, weight_decay=0.0005)
+    #optimizer = torch.optim.SGD(param_dicts, lr=0.01)
+
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 
     if args.eval:
-        dataset_val = build_dataset(image_set=args.dataset, args=args)
+        dataset_val = build_dataset(dataset_name=args.dataset_name, image_set=args.dataset, args=args)
 
         if args.distributed:
             sampler_val = DistributedSampler(dataset_val, shuffle=False)
@@ -63,8 +76,8 @@ def main(args):
 
         data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val, drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
     else:
-        dataset_train = build_dataset(image_set='train', args=args)
-        dataset_val = build_dataset(image_set='val', args=args)
+        dataset_train = build_dataset(dataset_name=args.dataset_name, image_set='train', args=args)
+        dataset_val = build_dataset(dataset_name=args.dataset_name, image_set='val', args=args)
 
         if args.distributed:
             sampler_train = DistributedSampler(dataset_train)
@@ -94,7 +107,7 @@ def main(args):
                 if  ("input_proj" in k) and args.layer1_num != 3:
                     continue
                 new_state_dict[k] = checkpoint['model'][k]
-            
+
             # Compare load model and current model
             current_param = [n for n,p in model_without_ddp.named_parameters()]
             current_buffer = [n for n,p in model_without_ddp.named_buffers()]
@@ -109,12 +122,12 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
 
-            # this is to compromise old implementation 
+            # this is to compromise old implementation
             new_state_dict = {}
             for k in checkpoint['model']:
                 if "bbox_embed" in k:
                     print("bbox_embed from OLD implementation has been replaced with lines_embed")
-                    new_state_dict["lines_embed."+'.'.join(k.split('.')[1:])] = checkpoint['model'][k] 
+                    new_state_dict["lines_embed."+'.'.join(k.split('.')[1:])] = checkpoint['model'][k]
                 else:
                     new_state_dict[k] = checkpoint['model'][k]
 
@@ -128,7 +141,7 @@ def main(args):
             for p in current_param:
                 if p not in load_param:
                     print(p, 'is a new parameter. Not found from load dict.')
-            
+
             # load model
             model_without_ddp.load_state_dict(new_state_dict)
 
@@ -143,7 +156,7 @@ def main(args):
         new_state_dict = {}
         for k in checkpoint['model']:
             if "bbox_embed" in k:
-                new_state_dict["lines_embed."+'.'.join(k.split('.')[1:])] = checkpoint['model'][k] 
+                new_state_dict["lines_embed."+'.'.join(k.split('.')[1:])] = checkpoint['model'][k]
             else:
                 new_state_dict[k] = checkpoint['model'][k]
 
@@ -162,20 +175,30 @@ def main(args):
         print('Finish load frozen_weights')
     else:
         print("NO RESUME. TRAIN FROM SCRATCH")
-        
+
     if args.eval:
         test_stats = evaluate(model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir, args)
         #print('checkpoint'+ str(checkpoint['epoch']))
-        return 
+        return
 
     print("Start training")
     start_time = time.time()
+
+    train_losses = []
+    test_losses = []
+    losses_all = {
+        'train': [],
+        'test': []
+    }
+
+    save_json(os.path.join(output_dir, 'info.json'), {'weight_dict': criterion.weight_dict, 'args': vars(args)})
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
-        
+
         train_stats = train_one_epoch(model, criterion, postprocessors, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args)
-        
+
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoints/checkpoint.pth']
@@ -197,6 +220,23 @@ def main(args):
                      **{f'test_{k}': format(v, ".6f") for k, v in test_stats.items()},
                      'epoch': epoch, 'n_parameters': n_parameters}
 
+        print('******')
+        print('******')
+        print('******')
+        print('******')
+
+        print('Train loss:', train_stats['loss'])
+        print('Test loss:', test_stats['loss'])
+
+        train_losses.append(train_stats['loss'])
+        test_losses.append(test_stats['loss'])
+        losses_all['train'].append(train_stats)
+        losses_all['test'].append(test_stats)
+
+        save_json(os.path.join(output_dir, 'train.json'), {'train': train_losses})
+        save_json(os.path.join(output_dir, 'test.json'), {'test': test_losses})
+        save_json(os.path.join(output_dir, 'losses_all.json'), losses_all)
+
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
@@ -208,6 +248,10 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('LETR training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
+
+    if args.output_dir == '<auto>':
+        args.output_dir = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
         Path(args.output_dir+'/checkpoints').mkdir(parents=True, exist_ok=True)

@@ -3,6 +3,7 @@ import torch.utils.data
 import torchvision
 
 from .coco import build as build_coco
+from .bin_dataset import build_bins
 
 
 def get_coco_api_from_dataset(dataset):
@@ -15,6 +16,8 @@ def get_coco_api_from_dataset(dataset):
         return dataset.coco
 
 
-def build_dataset(image_set, args):
-
-    return build_coco(image_set, args)
+def build_dataset(dataset_name, image_set, args):
+    if dataset_name == 'coco':
+        return build_coco(image_set, args)
+    elif dataset_name == 'bins':
+        return build_bins(image_set, args)

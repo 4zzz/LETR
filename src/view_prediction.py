@@ -4,11 +4,6 @@ import json
 import numpy as np
 from matplotlib import pyplot as plt
 
-if len(sys.argv) != 2:
-    print('No input file')
-    exit()
-file = sys.argv[1]
-
 def plot_lines_3D(lines, ax, color, label):
     for i, line in enumerate(lines):
         x1, y1, z1, x2, y2, z2 = line
@@ -36,7 +31,7 @@ def view3D(xyz, pred_lines, target_lines):
     plot_lines(pred_lines[keep], ax, 'r', 'prediction')
 
     plt.legend()
-    plt.show()
+    return plt
 
 def view2D(img, pred_lines, target_lines):
     from PIL import Image, ImageDraw
@@ -67,22 +62,29 @@ def view2D(img, pred_lines, target_lines):
         draw.line((x1*width, y1*height, x2*width, y2*height), fill=(255, 0, 0), width=2)
 
     plt.imshow(np.asarray(pil_img))
-    plt.show()
+    return plt
 
-with open(file, 'r') as file:
-    data = json.load(file)
+if __name__ == '__main__':
 
-xyz = np.array(data['xyz'])
+    if len(sys.argv) != 2:
+        print('No input file')
+        exit()
+    file = sys.argv[1]
 
-pred_scores = np.array(data['prediction']['scores'])
-pred_lines = np.array(data['prediction']['lines'])
-target_lines = data['targets']['lines']
-keep = np.array(np.argsort(pred_scores)[::-1][:80])
-print(f'displaying {len(keep)} lines with scores: ', pred_scores[keep])
-pred_lines = pred_lines[keep]
+    with open(file, 'r') as file:
+        data = json.load(file)
 
-print(pred_lines.shape)
-if pred_lines.shape[1] == 4:
-    view2D(xyz, pred_lines, target_lines)
-else:
-    view3D(xyz, pred_lines, target_lines)
+    xyz = np.array(data['xyz'])
+
+    pred_scores = np.array(data['prediction']['scores'])
+    pred_lines = np.array(data['prediction']['lines'])
+    target_lines = data['targets']['lines']
+    keep = np.array(np.argsort(pred_scores)[::-1][:80])
+    print(f'displaying {len(keep)} lines with scores: ', pred_scores[keep])
+    pred_lines = pred_lines[keep]
+
+    print(pred_lines.shape)
+    if pred_lines.shape[1] == 4:
+        view2D(xyz, pred_lines, target_lines).show()
+    else:
+        view3D(xyz, pred_lines, target_lines).show()

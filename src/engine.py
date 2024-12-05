@@ -16,6 +16,7 @@ import datetime
 import util.misc as utils
 import torch.nn.functional as F
 from pathlib import Path
+from view_prediction import view2D, view3D
 
 
 def save_prediction_data(samples, outputs, targets, filename, criterion=None, index=0):
@@ -51,31 +52,21 @@ def save_prediction_visualization(samples, outputs, filename, index=0):
     out_logits, out_line = outputs['pred_logits'][index], outputs['pred_lines'][index]
     prob = F.softmax(out_logits, -1)
     scores, labels = prob[..., :-1].max(-1)
-    lines = out_line.detach().cpu()#
+    lines = out_line.detach().cpu()
     scores = scores.detach().cpu().numpy()
     keep = np.array(np.argsort(scores)[::-1][:12])
     lines = lines[keep]
 
+    #target_lines = targets[index]['lines']
+
     xyz, _ = samples.decompose()
-    img = np.moveaxis(xyz[index].detach().cpu().numpy(), 0, -1)
-
-    non_zeros = np.prod(img, axis=2) != 0
-    points = img[non_zeros]
-
-    zeros = np.prod(img, axis=2) == 0
-    img -= np.min(img)
-    img /= np.max(img)
-    img[zeros] = np.array([0. , 0. , 0.])
-
-    plt.imshow(img)
-
-    fig = plt.figure()
-    ax = fig.add_subplot(projection='3d')
-    ax.scatter(points[:,0], points[:,1], points[:,2], marker='o')
-
-    for line in lines:
-        x1, y1, z1, x2, y2, z2 = line.detach().cpu().numpy()
-        ax.plot([x1, x2], [y1, y2], [z1, z2], color='r', marker='o')
+    xyz = xyz[index].detach().cpu().tolist()
+    #print(xyz.shape)
+    #exit()
+    if lines.shape[1] == 4:
+        plt = view2D(xyz, lines, [])
+    else:
+        plt = view3D(xyz, lines, []).show()
     plt.savefig(filename)
 
 

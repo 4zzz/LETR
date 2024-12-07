@@ -169,10 +169,10 @@ class SetCriterion(nn.Module):
         src_lines = outputs['pred_lines'][idx]
 
         target_lines = torch.cat([t['lines'][i] for t, (_, i) in zip(targets, origin_indices)], dim=0)
-        print('origin_indices', origin_indices)
-        print('idx', idx)
-        print('src_lines', src_lines)
-        print('target_lines', target_lines)
+        #print('origin_indices', origin_indices)
+        #print('idx', idx)
+        #print('src_lines', src_lines)
+        #print('target_lines', target_lines)
         #exit()
         loss_line = F.l1_loss(src_lines, target_lines, reduction='none')
 

@@ -60,9 +60,13 @@ def main(args):
             "lr": args.lr_backbone,
         },
     ]
-    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
-    #optimizer = torch.optim.SGD(param_dicts, lr=0.001, momentum=0.9, weight_decay=0.0005)
-    #optimizer = torch.optim.SGD(param_dicts, lr=0.01)
+
+    if args.optimizer == 'AdamW':
+        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
+    elif args.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=args.sgd_momentum, weight_decay=args.sgd_weight_decay)
+    else:
+        assert False
 
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 

@@ -81,7 +81,7 @@ def get_canonical_transform(transform):
 
 
 class Dataset(Dataset):
-    def __init__(self, path, split,
+    def __init__(self, args, path, split,
                  width, height, keep_dim_aspect_ratio=True, preload=True, use_resize_cache=True,
                  cutout_prob=0.0, cutout_inside=True,
                  max_cutout_size=0.8, min_cutout_size=0.2,
@@ -120,6 +120,7 @@ class Dataset(Dataset):
         # load lines
         for i in range(len(self.entries)):
             self.entries[i]['lines'] = self.load_lines(self.entries[i])
+            self.entries[i]['synthetic'] = self.is_synthetic(self.entries[i])
         
         # add sample ids
         for i in range(len(self.entries)):
@@ -131,13 +132,25 @@ class Dataset(Dataset):
             elif self.split == 'val':
                 self.entries = [entry for i, entry in enumerate(self.entries) if i % 5 == 0]
 
-        reduced = []
-        for i in range(len(self.entries)):
-            if np.random.rand() < 0.02:
-                reduced.append(self.entries[i])
-        reduced = [self.entries[0], self.entries[1]]
-        #reduced = [self.entries[0]]
-        self.entries = reduced
+        if args.bins_pick_samples != 'all':
+            picked = []
+            print('picking', args.bins_pick_samples, 'samples')
+            for i in range(len(self.entries)):
+                if self.entries[i]['synthetic'] is True and args.bins_pick_samples == 'synthetic':
+                    picked.append(self.entries[i])
+                elif self.entries[i]['synthetic'] is False and args.bins_pick_samples == 'real':
+                    picked.append(self.entries[i])
+            self.entries = picked
+            print('Picked', len(self.entries), 'samples')
+
+        if args.bins_subsample_batch < 1.0:
+            reduced = []
+            for i in range(len(self.entries)):
+                if np.random.rand() < args.bins_subsample_batch:
+                    reduced.append(self.entries[i])
+            #reduced = [self.entries[0], self.entries[1]]
+            #reduced = [self.entries[0]]
+            self.entries = reduced
 
         print("Split: ", self.split)
         print("Size: ", len(self))
@@ -209,6 +222,11 @@ class Dataset(Dataset):
         :return: number of elements in dataset
         """
         return len(self.entries)
+
+    def is_synthetic(self, entry):
+        sample_dir = os.path.dirname(entry['exr_positions_path'])
+        flag_file = os.path.join(self.dataset_dir, sample_dir, 'synthetic')
+        return os.path.exists(flag_file)
 
     def load_lines(self, entry):
         sample_dir = os.path.dirname(entry['exr_positions_path'])
@@ -392,7 +410,7 @@ class Dataset(Dataset):
         #        'orig_transform': torch.from_numpy(orig_transform), 'txt_path': entry['txt_path']}
 
         target = {}
-        lines = entry['lines'][[0, 2]]
+        lines = entry['lines']#[[0, 2]]
         target['image_id'] = torch.tensor(entry['sample_id'])
         target['labels'] = torch.tensor([0 for _ in lines], dtype=torch.int64)
         target['area'] = torch.tensor([1 for _ in lines])
@@ -424,13 +442,13 @@ class Dataset(Dataset):
 
 def build_bins(image_set, args):
     if image_set == 'train':
-        return Dataset(args.bins_path, 'train', args.bins_input_width, args.bins_input_height,
+        return Dataset(args, args.bins_path, 'train', args.bins_input_width, args.bins_input_height,
                             cutout_prob=args.bins_cutout_prob, cutout_inside=args.bins_cutout_inside,
                             max_cutout_size=args.bins_cutout_max_size, min_cutout_size=args.bins_cutout_min_size,
                             noise_sigma=args.bins_noise_sigma, t_sigma=args.bins_t_sigma, random_rot=args.bins_random_rot,
                             preload=not args.bins_no_preload)
     elif image_set == 'val':
-        return Dataset(args.bins_path, 'val', args.bins_input_width, args.bins_input_height, preload=not args.bins_no_preload)
+        return Dataset(args, args.bins_path, 'val', args.bins_input_width, args.bins_input_height, preload=not args.bins_no_preload)
 
 
 if __name__ == '__main__':

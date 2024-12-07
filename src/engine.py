@@ -66,7 +66,7 @@ def save_prediction_visualization(samples, outputs, filename, index=0):
     if lines.shape[1] == 4:
         plt = view2D(xyz, lines, [])
     else:
-        plt = view3D(xyz, lines, []).show()
+        plt = view3D(xyz, lines, [])
     plt.savefig(filename)
 
 
@@ -76,6 +76,7 @@ def save_prediction(args, epoch, samples, outputs, targets):
     if args.save_prediction_probability and np.random.rand() < args.save_prediction_probability:
         subdir = 'visualizations'
         Path(os.path.join(args.output_dir, subdir)).mkdir(parents=True, exist_ok=True)
+        index = np.random.randint(len(outputs))
         if args.save_prediction_visualization:
             path = os.path.join(args.output_dir, subdir, 'vis-e' + str(epoch).rjust(len(str(args.epochs)), '0') + f'-f{saved_figs:03}.png')
             print('Saving prediction visualization to', path)
@@ -113,8 +114,8 @@ def train_one_epoch(model, criterion, postprocessors, data_loader, optimizer, de
 
                 #print('outputs:', outputs)
                 #print('targets:', targets)
-                print('pred_lines:', outputs['pred_lines'])
-                print('target_lines:', [t['lines'] for t in targets])
+                #print('pred_lines:', outputs['pred_lines'])
+                #print('target_lines:', [t['lines'] for t in targets])
 
         except RuntimeError as e:
             if "out of memory" in str(e):

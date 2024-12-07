@@ -16,19 +16,12 @@ def view3D(xyz, pred_lines, target_lines):
 
     points = points[np.random.rand(points.shape[0]) < 0.05]
 
-    #zeros = np.prod(img, axis=2) == 0
-    #img -= np.min(img)
-    #img /= np.max(img)
-    #img[zeros] = np.array([0. , 0. , 0.])
-
-    #plt.imshow(img)
-
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
     ax.scatter(points[:,0], points[:,1], points[:,2], marker='o')
 
-    plot_lines(target_lines, ax, 'g', 'annotation')
-    plot_lines(pred_lines[keep], ax, 'r', 'prediction')
+    plot_lines_3D(target_lines, ax, 'g', 'annotation')
+    plot_lines_3D(pred_lines, ax, 'r', 'prediction')
 
     plt.legend()
     return plt
@@ -46,8 +39,6 @@ def view2D(img, pred_lines, target_lines):
 
 
     pil_img = Image.fromarray(np.uint8(img*255))
-
-    #pil_img = Image.fromarray(np.uint8(img*255))
     draw = ImageDraw.Draw(pil_img)
 
     width = img.shape[1]

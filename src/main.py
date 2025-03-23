@@ -156,7 +156,7 @@ def main(args):
                 lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
                 args.start_epoch = checkpoint['epoch'] + 1
     elif args.frozen_weights:
-        checkpoint = torch.load(args.frozen_weights, map_location='cpu')
+        checkpoint = torch.load(args.frozen_weights, map_location='cpu', weights_only=False)
         new_state_dict = {}
         for k in checkpoint['model']:
             if "bbox_embed" in k:
@@ -181,7 +181,7 @@ def main(args):
         print("NO RESUME. TRAIN FROM SCRATCH")
 
     if args.eval:
-        test_stats = evaluate(model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir, args)
+        test_stats = evaluate(model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir, args, epoch)
         #print('checkpoint'+ str(checkpoint['epoch']))
         return
 
@@ -218,7 +218,7 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
 
-        test_stats = evaluate(model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir, args)
+        test_stats = evaluate(model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir, args, epoch)
 
         log_stats = {**{f'train_{k}': format(v, ".6f") for k, v in train_stats.items()},
                      **{f'test_{k}': format(v, ".6f") for k, v in test_stats.items()},
@@ -255,6 +255,8 @@ if __name__ == '__main__':
 
     if args.output_dir == '<auto>':
         args.output_dir = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
+    args.output_dir = os.path.join(args.output_dir_prefix, args.output_dir)
 
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)

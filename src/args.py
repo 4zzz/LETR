@@ -24,6 +24,10 @@ def get_args_parser():
     parser.add_argument('--save_prediction_visualization', action='store_true', default=False)
     parser.add_argument('--save_prediction_data', action='store_true', default=False)
 
+    parser.add_argument('--save_test_prediction_probability', default=0.0, type=float)
+    parser.add_argument('--save_test_prediction_visualization', action='store_true', default=False)
+    parser.add_argument('--save_test_prediction_data', action='store_true', default=False)
+
     # Model parameters
     # * Backbone
     parser.add_argument('--backbone', default='resnet50', type=str,
@@ -119,6 +123,8 @@ def get_args_parser():
     parser.add_argument('--bins_subsample_batch', type=float, default=1.0)
 
 
+    parser.add_argument('--output_dir_prefix', default='',
+                        help='path to prepend to output dir')
     parser.add_argument('--output_dir', default='<auto>',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',

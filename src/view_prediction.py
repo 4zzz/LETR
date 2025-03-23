@@ -9,7 +9,20 @@ def plot_lines_3D(lines, ax, color, label):
         x1, y1, z1, x2, y2, z2 = line
         ax.plot([x1, x2], [y1, y2], [z1, z2], color=color, marker='o', label=label if i == 0 else '')
 
-def view3D(xyz, pred_lines, target_lines):
+def view_structured(xyz):
+    plt.imshow(np.moveaxis(xyz, 0, -1))
+
+
+def view3D(xyz, pred_lines, target_lines, entry):
+    #img = np.moveaxis(xyz, 0, -1)
+    #non_zeros = np.prod(img, axis=2) != 0
+    #points = img[non_zeros]
+
+    means = np.array(entry['normalized']['means'])
+    stds = np.array(entry['normalized']['stds'])
+
+    #xyz = np.array(data['xyz'])
+
     img = np.moveaxis(xyz, 0, -1)
     non_zeros = np.prod(img, axis=2) != 0
     points = img[non_zeros]
@@ -24,7 +37,7 @@ def view3D(xyz, pred_lines, target_lines):
     plot_lines_3D(pred_lines, ax, 'r', 'prediction')
 
     plt.legend()
-    return plt
+    return plt, ax
 
 def view2D(img, pred_lines, target_lines):
     from PIL import Image, ImageDraw
@@ -69,13 +82,21 @@ if __name__ == '__main__':
 
     pred_scores = np.array(data['prediction']['scores'])
     pred_lines = np.array(data['prediction']['lines'])
-    target_lines = data['targets']['lines']
-    keep = np.array(np.argsort(pred_scores)[::-1][:80])
+    target_lines = np.array(data['targets']['lines'])
+    keep = np.array(np.argsort(pred_scores)[::-1][:4])
     print(f'displaying {len(keep)} lines with scores: ', pred_scores[keep])
     pred_lines = pred_lines[keep]
+
+
+    pred_lines = ((pred_lines.reshape(-1,3) * stds) + means).reshape(-1, 6)
+    target_lines = ((target_lines.reshape(-1,3) * stds) + means).reshape(-1, 6)
+    points = (points * stds) + means
+
 
     print(pred_lines.shape)
     if pred_lines.shape[1] == 4:
         view2D(xyz, pred_lines, target_lines).show()
     else:
-        view3D(xyz, pred_lines, target_lines).show()
+        view_structured(xyz)
+        view3D(xyz, pred_lines, target_lines, data['entry'])
+        plt.show()

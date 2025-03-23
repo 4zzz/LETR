@@ -117,13 +117,12 @@ class Dataset(Dataset):
             for p in {'exr_normals_path', 'exr_positions_path', 'txt_path'}:
                 self.entries[i][p] = os.path.join(*self.entries[i][p].split('\\'))
 
-        # load lines
         for i in range(len(self.entries)):
+            # load lines
             self.entries[i]['lines'] = self.load_lines(self.entries[i])
+            # add synthetic flag
             self.entries[i]['synthetic'] = self.is_synthetic(self.entries[i])
-        
-        # add sample ids
-        for i in range(len(self.entries)):
+            # add ids
             self.entries[i]['sample_id'] = i
 
         if 'train' not in path and 'val' not in path:
@@ -164,6 +163,9 @@ class Dataset(Dataset):
         self.means = [-7.317206859588623, -7.509462833404541, 621.6871337890625]
         self.stds = [222.503662109375, 165.90419006347656, 681.2403564453125]
         #self.compute_normalization_constants()
+
+    def get_nomalization_constants(self):
+        return self.means, self.stds
 
     def compute_normalization_constants(self):
         xyzs = []
@@ -275,10 +277,11 @@ class Dataset(Dataset):
                 if xyz is None:
                     print(exr_path)
                     raise ValueError("Image at path ", exr_path)
-                print('Loaded resized sample from cache!')
+                #print('Loaded resized sample from cache!')
                 cached = True
 
         if xyz is None:
+            #print('reading original')
             exr_path = os.path.join(self.dataset_dir, entry['exr_positions_path'])
             xyz = cv2.imread(exr_path,  cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
             if xyz is None:
@@ -291,7 +294,7 @@ class Dataset(Dataset):
                 raise ValueError("Image at path ", exr_path, "has different aspect ratio")
         else:
             self.used_size = (width, height)
-            print(f'Corrected width and height aspect ratio. {xyz.shape[1]} x {xyz.shape[0]} -> {width} x {height}')
+            #print(f'Corrected width and height aspect ratio. {xyz.shape[1]} x {xyz.shape[0]} -> {width} x {height}')
 
         if xyz.shape[1] != width or xyz.shape[0] != height:
             xyz = cv2.resize(xyz, (width, height), interpolation=cv2.INTER_NEAREST_EXACT)
@@ -301,7 +304,7 @@ class Dataset(Dataset):
             exr_dir = os.path.dirname(exr_path)
             Path(exr_dir).mkdir(parents=True, exist_ok=True)
             cv2.imwrite(exr_path, xyz)
-            print('Saved resized sample to cache')
+            #print('Saved resized sample to cache')
 
         xyz = np.transpose(xyz, [2, 0, 1])
         return xyz
@@ -416,6 +419,7 @@ class Dataset(Dataset):
         target['area'] = torch.tensor([1 for _ in lines])
         target['iscrowd'] = torch.tensor([0 for _ in lines])
         target['lines'] = torch.tensor(self.get_transformed_lines(lines, transform), dtype=torch.float32)
+        #target['exr_file'] = entry['exr_positions_path']
 
         #print('Lines are', target['lines'])
         #self.normalize_lines(target['lines'])
@@ -424,8 +428,14 @@ class Dataset(Dataset):
 
         #xyz = torch.tensor(xyz)
 
-        xyz = self.normalize_xyz(torch.tensor(xyz))
-        target['lines'] = self.normalize_lines(target['lines'])
+        if True:
+            xyz = self.normalize_xyz(torch.tensor(xyz))
+            target['lines'] = self.normalize_lines(target['lines'])
+            entry['normalized'] = {'means': self.means, 'stds': self.stds}
+        else:
+            xyz = torch.tensor(xyz)
+            entry['normalized'] = {'means': [0.0, 0.0, 0.0], 'stds': [1.0, 1.0, 1.0]}
+
         #print('target[\'lines\']', target['lines'][:2].view(2, 6))
         #print(target['lines'][:1].shape)
         #exit()
@@ -438,7 +448,7 @@ class Dataset(Dataset):
         #exit()
 
         #return torch.tensor(self.load_xyz(entry)), target
-        return xyz, target
+        return xyz, target, entry
 
 def build_bins(image_set, args):
     if image_set == 'train':
@@ -449,6 +459,8 @@ def build_bins(image_set, args):
                             preload=not args.bins_no_preload)
     elif image_set == 'val':
         return Dataset(args, args.bins_path, 'val', args.bins_input_width, args.bins_input_height, preload=not args.bins_no_preload)
+    elif image_set == 'test':
+        return Dataset(args, args.bins_path, 'test', args.bins_input_width, args.bins_input_height, preload=not args.bins_no_preload)
 
 
 if __name__ == '__main__':

@@ -16,75 +16,23 @@ import datetime
 import util.misc as utils
 import torch.nn.functional as F
 from pathlib import Path
-from view_prediction import view2D, view3D
-
-
-def save_prediction_data(samples, outputs, targets, filename, criterion=None, index=0):
-    out_logits, out_line = outputs['pred_logits'][index].detach().cpu(), outputs['pred_lines'][index].detach().cpu()
-
-    prob = F.softmax(out_logits, -1)
-    scores, labels = prob[..., :-1].max(-1)
-
-    lines = out_line#.view(out_line.shape[0]//6, 6)
-
-    print('targets', targets[index])
-
-    xyz, _ = samples.decompose()
-
-    data = {
-        'xyz': xyz[index].tolist(),
-        'targets': {key:value.tolist() for (key,value) in targets[index].items()},
-        #'loss': {} if criterion is None else criterion(torch.tensor([]), torch.tensor([]))
-        'prediction': {
-            'scores': scores.tolist(),
-            'labels': labels.tolist(),
-            'lines': lines.tolist(),
-        }
-    }
-
-    #print('data', data)
-
-    with open(filename, 'w') as f:
-        json.dump(data, f)
-
-def save_prediction_visualization(samples, outputs, filename, index=0):
-    # find lines
-    out_logits, out_line = outputs['pred_logits'][index], outputs['pred_lines'][index]
-    prob = F.softmax(out_logits, -1)
-    scores, labels = prob[..., :-1].max(-1)
-    lines = out_line.detach().cpu()
-    scores = scores.detach().cpu().numpy()
-    keep = np.array(np.argsort(scores)[::-1][:12])
-    lines = lines[keep]
-
-    #target_lines = targets[index]['lines']
-
-    xyz, _ = samples.decompose()
-    xyz = xyz[index].detach().cpu().tolist()
-    #print(xyz.shape)
-    #exit()
-    if lines.shape[1] == 4:
-        plt = view2D(xyz, lines, [])
-    else:
-        plt = view3D(xyz, lines, [])
-    plt.savefig(filename)
-
+from util.save_prediction import save_prediction_data, save_prediction_visualization
 
 saved_figs = 0
-def save_prediction(args, epoch, samples, outputs, targets):
+def save_prediction(args, epoch, entry, samples, outputs, targets, save_prob, save_data, save_png, subdir):
     global saved_figs
-    if args.save_prediction_probability and np.random.rand() < args.save_prediction_probability:
-        subdir = 'visualizations'
+    if save_prob > 0.0 and np.random.rand() < save_prob:
+        #subdir = 'visualizations'
         Path(os.path.join(args.output_dir, subdir)).mkdir(parents=True, exist_ok=True)
         index = np.random.randint(len(outputs))
-        if args.save_prediction_visualization:
+        if save_png:
             path = os.path.join(args.output_dir, subdir, 'vis-e' + str(epoch).rjust(len(str(args.epochs)), '0') + f'-f{saved_figs:03}.png')
             print('Saving prediction visualization to', path)
-            save_prediction_visualization(samples, outputs, path)
-        if args.save_prediction_data:
+            save_prediction_visualization(samples, outputs, path, entry)
+        if save_data:
             path = os.path.join(args.output_dir, subdir, 'vis-e' + str(epoch).rjust(len(str(args.epochs)), '0') + f'-f{saved_figs:03}.json')
             print('Saving prediction data to')
-            save_prediction_data(samples, outputs, targets, path)
+            save_prediction_data(samples, outputs, targets, entry, args.bins_path, path)
         saved_figs += 1
 
 
@@ -98,18 +46,26 @@ def train_one_epoch(model, criterion, postprocessors, data_loader, optimizer, de
 
     counter = 0
     torch.cuda.empty_cache()
-    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+    for samples, targets, entry in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [{k: (v.to(device) if k != 'exr_file' else v) for k, v in t.items()} for t in targets]
 
         try:
             if args.LETRpost:
                 outputs, origin_indices = model(samples, postprocessors, targets, criterion)
-                save_prediction(args, epoch, samples, outputs, targets)
+                save_prediction(args, epoch, entry, samples, outputs, targets,
+                                save_prob=args.save_prediction_probability,
+                                save_data=args.save_prediction_data,
+                                save_png=args.save_prediction_visualization,
+                                subdir='visualizations_train')
                 loss_dict = criterion(outputs, targets, origin_indices)
             else:
                 outputs = model(samples)
-                save_prediction(args, epoch, samples, outputs, targets)
+                save_prediction(args, epoch, entry, samples, outputs, targets,
+                                save_prob=args.save_prediction_probability,
+                                save_data=args.save_prediction_data,
+                                save_png=args.save_prediction_visualization,
+                                subdir='visualizations_train')
                 loss_dict = criterion(outputs, targets)
 
                 #print('outputs:', outputs)
@@ -154,7 +110,7 @@ def train_one_epoch(model, criterion, postprocessors, data_loader, optimizer, de
 
 
 @torch.no_grad()
-def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir, args):
+def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir, args, epoch):
     model.eval()
     criterion.eval()
 
@@ -168,15 +124,25 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
     #    id_to_img[d['id']] = d['file_name'].split('.')[0]
     counter = 0
     num_images = 0
-    for samples, targets in metric_logger.log_every(data_loader, 10, header):
+    for samples, targets, entry in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [{k: (v.to(device) if k != 'exr_file' else v) for k, v in t.items()} for t in targets]
 
         if args.LETRpost:
             outputs, origin_indices = model(samples, postprocessors, targets, criterion)
+            save_prediction(args, epoch, entry, samples, outputs, targets,
+                                save_prob=args.save_test_prediction_probability,
+                                save_data=args.save_test_prediction_data,
+                                save_png=args.save_test_prediction_visualization,
+                                subdir='visualizations_test')
             loss_dict = criterion(outputs, targets, origin_indices)
         else:
             outputs = model(samples)
+            save_prediction(args, epoch, entry, samples, outputs, targets,
+                                save_prob=args.save_test_prediction_probability,
+                                save_data=args.save_test_prediction_data,
+                                save_png=args.save_test_prediction_visualization,
+                                subdir='visualizations_test')
             loss_dict = criterion(outputs, targets)
 
         weight_dict = criterion.weight_dict

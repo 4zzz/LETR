@@ -149,7 +149,7 @@ def main(args):
             eRE = min(calculate_eRE(gt_R1, R), calculate_eRE(gt_R2, R))
             eTE = calculate_eTE(gt_T, T)
 
-            print(f'eval_vis/eval_{i:03}.json [{entry['txt_path']}], synthetic ',  entry['synthetic'],': eTE =', eTE, ', eRE =', eRE)
+            print(f"eval_vis/eval_{i:03}.json [{entry['txt_path']}], synthetic ",  entry['synthetic'],': eTE =', eTE, ', eRE =', eRE)
 
             eTEs.append(eTE)
             eREs.append(eRE)

@@ -13,19 +13,10 @@ def view_structured(xyz):
     plt.imshow(np.moveaxis(xyz, 0, -1))
 
 
-def view3D(xyz, pred_lines, target_lines, entry):
+def view3D(points, pred_lines, target_lines):
     #img = np.moveaxis(xyz, 0, -1)
     #non_zeros = np.prod(img, axis=2) != 0
     #points = img[non_zeros]
-
-    means = np.array(entry['normalized']['means'])
-    stds = np.array(entry['normalized']['stds'])
-
-    #xyz = np.array(data['xyz'])
-
-    img = np.moveaxis(xyz, 0, -1)
-    non_zeros = np.prod(img, axis=2) != 0
-    points = img[non_zeros]
 
     points = points[np.random.rand(points.shape[0]) < 0.05]
 
@@ -78,7 +69,17 @@ if __name__ == '__main__':
     with open(file, 'r') as file:
         data = json.load(file)
 
+    normalized = data['entry']['normalized']
+    means = np.array(normalized['means'])
+    stds = np.array(normalized['stds'])
+
     xyz = np.array(data['xyz'])
+
+    img = np.moveaxis(xyz, 0, -1)
+    non_zeros = np.prod(img, axis=2) != 0
+    points = img[non_zeros]
+
+    #points = points[np.random.rand(points.shape[0]) < 0.05]
 
     pred_scores = np.array(data['prediction']['scores'])
     pred_lines = np.array(data['prediction']['lines'])
@@ -98,5 +99,5 @@ if __name__ == '__main__':
         view2D(xyz, pred_lines, target_lines).show()
     else:
         view_structured(xyz)
-        view3D(xyz, pred_lines, target_lines, data['entry'])
+        view3D(points, pred_lines, target_lines)
         plt.show()

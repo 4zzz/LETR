@@ -122,6 +122,12 @@ def get_args_parser():
     parser.add_argument('--bins_pick_samples', default='all', type=str, choices=('all', 'synthetic', 'real'))
     parser.add_argument('--bins_subsample_batch', type=float, default=1.0)
 
+    # mtevents_rgb dataset options
+    parser.add_argument('--mtevents_rgb_dataset_json_path', type=str, default=None)
+    parser.add_argument('--mtevents_rgb_input_width', type=int, default=256, help='size of input')
+    parser.add_argument('--mtevents_rgb_input_height', type=int, default=256, help='size of input')
+    parser.add_argument('--mtevents_rgb_no_preload', action='store_true', default=False)
+    parser.add_argument('--mtevents_rgb_subsample_batch', type=float, default=1.0)
 
     parser.add_argument('--output_dir_prefix', default='',
                         help='path to prepend to output dir')

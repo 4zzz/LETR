@@ -25,7 +25,10 @@ def save_prediction_data(samples, outputs, targets,
     xyz, _ = samples.decompose()
 
     ddir = os.path.dirname(bins_path)
-    gt_R1, gt_T = read_transform_file(os.path.join(ddir, entry[index]['txt_path']))
+    transform = np.array(entry[index]['proper_transform'])
+    gt_R1 = transform[:3, :3]
+    gt_T = transform[:3, 3]
+    #gt_R1, gt_T = read_transform_file(os.path.join(ddir, entry[index]['txt_path']))
     gt_R2 = np.matrix.copy(gt_R1)
     gt_R2[:, :2] *= -1
 

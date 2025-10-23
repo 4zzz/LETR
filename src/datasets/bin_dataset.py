@@ -115,11 +115,20 @@ class Dataset(Dataset):
         # convert paths to host format
         for i in range(len(self.entries)):
             for p in {'exr_normals_path', 'exr_positions_path', 'txt_path'}:
-                self.entries[i][p] = os.path.join(*self.entries[i][p].split('\\'))
+                if p in self.entries[i]:
+                    self.entries[i][p] = os.path.join(*self.entries[i][p].split('\\'))
 
         for i in range(len(self.entries)):
             # load lines
-            self.entries[i]['lines'] = self.load_lines(self.entries[i])
+            l = self.load_lines(self.entries[i])
+            if 'lines' in self.entries[i]:
+                if l is not None:
+                    # override json lines
+                    self.entries[i]['lines'] = l
+                else:
+                    self.entries[i]['lines'] = np.array(self.entries[i]['lines'])
+            elif l is None:
+                raise(Exception(f'No lines for sample {i}'))
             # add synthetic flag
             self.entries[i]['synthetic'] = self.is_synthetic(self.entries[i])
             # add ids
@@ -233,8 +242,10 @@ class Dataset(Dataset):
     def load_lines(self, entry):
         sample_dir = os.path.dirname(entry['exr_positions_path'])
         lines_file = os.path.join(self.dataset_dir, sample_dir, 'bin_lines.txt')
-        lines = np.loadtxt(lines_file)
-        return lines
+        if os.path.exists(lines_file):
+            lines = np.loadtxt(lines_file)
+            return lines
+        return None
         
     def get_transformed_lines(self, lines, transform):
         #lines = entry['lines']

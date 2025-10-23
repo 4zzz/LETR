@@ -139,9 +139,14 @@ def main(args):
             # undo normalization
             pred_lines = ((pred_lines.reshape(-1,3) * stds) + means).reshape(-1, 6)
 
-            R, T = calculate_pose(pred_lines, pred_scores, get_bin_z_offset(entry['dir'])*2)
 
-            gt_R1, gt_T = read_transform_file(os.path.join(dataset_dir, entry['txt_path']))
+            bin_off = entry['bin_height'] if 'bin_height' in entry else get_bin_z_offset(entry['dir'])*2
+            R, T = calculate_pose(pred_lines, pred_scores, bin_off)
+
+            transform = np.array(entry['proper_transform'])
+            gt_R1 = transform[:3, :3]
+            gt_T = transform[:3, 3]
+            #gt_R1, gt_T = read_transform_file(os.path.join(dataset_dir, entry['txt_path']))
             gt_R2 = np.matrix.copy(gt_R1)
             gt_R2[:, :2] *= -1
 

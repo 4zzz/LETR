@@ -25,7 +25,7 @@ class LETR(nn.Module):
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
 
-        self.lines_embed  =  MLP(hidden_dim, hidden_dim, 6 if args.dataset_name == 'bins' else 4, 3)
+        self.lines_embed  =  MLP(hidden_dim, hidden_dim, 6 if args.dataset_name in {'bins', 'mtevents_rgb'} else 4, 3)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
 
         channel = [256, 512, 1024, 2048]
@@ -48,7 +48,7 @@ class LETR(nn.Module):
 
         outputs_class = self.class_embed(hs)
         #outputs_coord = self.lines_embed(hs)
-        outputs_coord = self.lines_embed(hs) if self.args.dataset_name == 'bins' else self.lines_embed(hs).sigmoid()
+        outputs_coord = self.lines_embed(hs) if self.args.dataset_name in {'bins', 'mtevents_rgb'} else self.lines_embed(hs).sigmoid()
         out = {'pred_logits': outputs_class[-1], 'pred_lines': outputs_coord[-1]}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)

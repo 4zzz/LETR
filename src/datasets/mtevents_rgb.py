@@ -7,13 +7,56 @@ import cv2
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
-#from matplotlib import pyplot as plt
-from scipy.spatial.transform import Rotation
-import numpy as np
+from matplotlib import pyplot as plt
+from scipy.spatial.transform import Rotation as R, Slerp
+from scipy.interpolate import interp1d
+
+
+class Annotation():
+    def __init__(self, dataset_root, matching_name, rgb_file_name):
+        sample_name = os.path.basename(rgb_file_name).split('.')[0]
+        annotation_path = os.path.join(dataset_root, 'matched_poses', matching_name, sample_name + '.json')
+        with open(annotation_path) as f:
+            self.annotation = json.load(f)
+
+    def tracked_objects_ids(self):
+        return [obj['id'] for obj in self.annotation['tracked_objects']]
+
+    def _compute_rotation_mat_from_pose(self, pose):
+        return R.from_euler('xyz', pose['euler_angles_deg'], degrees=True).as_matrix()
+
+    def get_transform(self, object_id):
+        if str(object_id) not in self.annotation['matched_objects']:
+            raise(Exception('This image do not have match for object with id' + int(object_id)))
+
+        poses = self.annotation['matched_objects'][str(object_id)]
+        poses = sorted(poses, key=lambda p: p['pose_ts'])
+
+        if len(poses) > 1:
+            if self.annotation['rgb_ts'] >= poses[0]['pose_ts'] and self.annotation['rgb_ts'] <= poses[-1]['pose_ts']:
+                key_times = [p['pose_ts'] for p in poses]
+                key_rots = R.from_matrix([ self._compute_rotation_mat_from_pose(p) for p in poses ])
+                slerp = Slerp(key_times, key_rots)
+                r = slerp(self.annotation['rgb_ts']).as_matrix()
+
+                key_positions = np.array([p['center_3d'] for p in poses])
+                t = interp1d(key_times, key_positions, axis=0, kind='linear')(self.annotation['rgb_ts'])
+            else:
+                raise(Exception('Now what?'))
+        elif len(poses) == 1:
+            r = self._compute_rotation_mat_from_pose(poses[0])
+            t = np.array(poses[0]['center_3d'])
+        else:
+            raise(Exception('Missing poses for object ' + object_id))
+
+        transform = np.eye(4)
+        transform[:3, :3] = r
+        transform[:3, 3] = t
+        return transform
 
 class Dataset(Dataset):
     def __init__(self, args, path, split,
-                 width, height, matching_name = 'nearest_1to1', lines_name = 'outside', keep_dim_aspect_ratio=True, preload=True, use_resize_cache=True):
+                 width, height, matching_name = 'best_of_two_nearest_and_avg', lines_name = 'outside', keep_dim_aspect_ratio=True, preload=True, use_resize_cache=True):
         self.dataset_dir = os.path.dirname(path)
         self.split = split
         self.width = width
@@ -25,84 +68,63 @@ class Dataset(Dataset):
         self.rgbs_dir = 'extracted_rgb'
         self.poses_dir = 'matched_poses'
         self.lines_dir = 'obj_lines'
+        self.camera_params_dir = 'camera_params'
         self.matching_name = matching_name
         self.lines_name = lines_name
-
         self.preload = preload
-        #self.noise_sigma = noise_sigma
-        #self.t_sigma = t_sigma
-        #self.random_rot = random_rot
-
-        #self.cutout_prob = cutout_prob
-        #self.use_cutout = cutout_prob > 0.0
-        #self.cutout_inside = cutout_inside
-        #self.max_cutout_size = max_cutout_size
-        #self.min_cutout_size = min_cutout_size
-
         self.used_size = None
 
-        #if self.split != 'train' and self.cutout_prob > 0.0:
-        #    print("***** Split is not train, but cutout is enabled! *****")
+        self.normalize_output_3d_space = False
 
         print("Loading dataset from path: ", path)
         with open(path, 'r') as f:
             self.entries = json.load(f)[split]
 
-        # convert paths to host format
-        #for i in range(len(self.entries)):
-        #    for p in {'exr_normals_path', 'exr_positions_path', 'txt_path'}:
-        #        self.entries[i][p] = os.path.join(*self.entries[i][p].split('\\'))
+        if args.mtevents_rgb_subsample_batch < 1.0:
+            reduced = []
+            for i in range(len(self.entries)):
+                if np.random.rand() < args.mtevents_rgb_subsample_batch:
+                    reduced.append(self.entries[i])
+            #reduced = [self.entries[0], self.entries[1]]
+            #reduced = [self.entries[0]]
+            self.entries = reduced
+            print('Reduced sample count to', len(self.entries))
 
         print("Loading annotations")
         for i in range(len(self.entries)):
             # load lines
             self.entries[i]['lines'] = self.load_lines(self.entries[i])
             self.entries[i]['transform'] = self.load_transform(self.entries[i])
-            # add synthetic flag
-            #self.entries[i]['synthetic'] = self.is_synthetic(self.entries[i])
-            # add ids
             self.entries[i]['sample_id'] = i
-
-        #if 'train' not in path and 'val' not in path:
-        #    if self.split == 'train':
-        #        self.entries = [entry for i, entry in enumerate(self.entries) if i % 5 != 0]
-        #    elif self.split == 'val':
-        #        self.entries = [entry for i, entry in enumerate(self.entries) if i % 5 == 0]
-
-        #if args.bins_pick_samples != 'all':
-        #    picked = []
-        #    print('picking', args.bins_pick_samples, 'samples')
-        #    for i in range(len(self.entries)):
-        #        if self.entries[i]['synthetic'] is True and args.bins_pick_samples == 'synthetic':
-        #            picked.append(self.entries[i])
-        #        elif self.entries[i]['synthetic'] is False and args.bins_pick_samples == 'real':
-        #            picked.append(self.entries[i])
-        #    self.entries = picked
-        #    print('Picked', len(self.entries), 'samples')
-
-        if args.mtevents_rgb_subsample_batch < 1.0:
-            reduced = []
-            for i in range(len(self.entries)):
-                if np.random.rand() < args.bins_subsample_batch:
-                    reduced.append(self.entries[i])
-            #reduced = [self.entries[0], self.entries[1]]
-            #reduced = [self.entries[0]]
-            self.entries = reduced
+            # not used for training but for prediction visualization
+            self.entries[i]['camera_params'] = self.load_camera_params(self.entries[i]['img_path'])
 
         print("Split: ", self.split)
         print("Size: ", len(self))
         if self.preload:
             print("Preloading exrs to memory")
+            i, total = 0, len(self.entries)
+            p, pc = int(total * 0.1), 0
             for entry in self.entries:
                 #print(entry)
                 entry['rgb'] = self.load_rgb(entry)
+                if i == p:
+                    pct = ((i+1)/total)*100
+                    print(f'{pct:.2f} %')
+                    pc += 1
+                    p = int(total * 0.1 * (pc+1))-1
+                i += 1
 
 
+        # for RGB normalization
         self.means = [125.834, 134.014, 134.206]
         self.stds = [67.9709, 66.5856, 62.999]
+        # for prediction 3D space normalization
+        self.means3d = [-0.04032357, -0.14958457, 5.70839085]
+        self.stds3d = [0.74611402, 0.3836728,  1.21448497]
 
     def get_nomalization_constants(self):
-        return self.means, self.stds
+        return self.means, self.stds, self.means3d, self.stds3d
 
     def __len__(self):
         """
@@ -111,6 +133,12 @@ class Dataset(Dataset):
         """
         return len(self.entries)
 
+    def load_camera_params(self, img_path):
+        scene_name = img_path.split('/')[-1].split('_')[0]
+        camera_params_json_path = os.path.join(self.dataset_root, self.camera_params_dir, scene_name + '.json')
+        with open(camera_params_json_path) as f:
+            return json.load(f)
+
     def load_entry_annotation(self, entry):
         sample_name = entry['img_path'].split('.')[0]
         annotation_path = os.path.join(self.dataset_root, self.poses_dir, self.matching_name, sample_name + '.json')
@@ -118,55 +146,15 @@ class Dataset(Dataset):
             return json.load(f)
 
     def load_transform(self, entry):
-        sample_name = entry['img_path'].split('.')[0]
-        annotation_path = os.path.join(self.dataset_root, self.poses_dir, self.matching_name, sample_name + '.json')
-        with open(annotation_path) as f:
-            annotation = json.load(f)
-
-        obj = None
-        for o in annotation['objects']:
-            if o['object_id'] == entry['object_id']:
-                obj = o
-        if obj is None:
-            raise(Exception('Object not found int anntation for image', entry['img_path']))
-
-        eangles = obj['euler_angles_deg']
-        roll, pitch, yaw = np.deg2rad(eangles[0]), np.deg2rad(eangles[1]), np.deg2rad(eangles[2])
-
-        cx, cy, cz = np.cos([roll, pitch, yaw])
-        sx, sy, sz = np.sin([roll, pitch, yaw])
-
-        R_x = np.array([[1, 0, 0],
-                        [0, cx, -sx],
-                        [0, sx, cx]])
-
-        R_y = np.array([[cy, 0, sy],
-                        [0, 1, 0],
-                        [-sy, 0, cy]])
-
-        R_z = np.array([[cz, -sz, 0],
-                        [sz, cz, 0],
-                        [0, 0, 1]])
-        R = R_z @ R_y @ R_x
-
-        t = np.array(obj['center_3d'])
-
-        transform = np.eye(4)
-        transform[:3, :3] = R
-        transform[:3, 3] = t
-
-        return transform
+        annotation = Annotation(self.dataset_root, self.matching_name, entry['img_path'])
+        return annotation.get_transform(entry['object_id'])
 
     def load_lines(self, entry):
         lines_file = os.path.join(self.dataset_root, self.lines_dir, self.lines_name,  f'obj_{entry['object_id']:06}.txt')
-        #print('lines_file', lines_file)
-        #exit()
         lines = np.loadtxt(lines_file)
-        return lines
+        return lines / 1000
 
     def get_transformed_lines(self, lines, transform):
-        #lines = entry['lines']
-
         starts = np.c_[(lines[:, :3], np.ones(lines.shape[0]).T)]
         ends = np.c_[(lines[:, 3:], np.ones(lines.shape[0]).T)]
 
@@ -264,26 +252,9 @@ class Dataset(Dataset):
 
         return out
 
-    def aug(self, xyz_gt, transform):
-        """
-        Applies transformation matrix to pointcloud
-        :param xyz_gt: original pointcloud with shape (3, height, width)
-        :param transform: (4, 4) transformation matrix
-        :return: Transformed pointcloud with shape (3, height, width)
-        """
-        orig_shape = xyz_gt.shape
-        xyz = np.reshape(xyz_gt, [-1, 3])
-        xyz = np.concatenate([xyz, np.ones([xyz.shape[0], 1])], axis=-1)
-
-        xyz_t = (transform @ xyz.T).T
-
-        xyz_t = xyz_t[:, :3] / xyz_t[:, 3, np.newaxis]
-        xyz_t = np.reshape(xyz_t, orig_shape)
-        return xyz_t
-
     def normalize_lines(self, lines):
-        div = torch.tensor(self.stds + self.stds)
-        sub = torch.tensor(self.means + self.means) / div
+        div = torch.tensor(self.stds3d + self.stds3d)
+        sub = torch.tensor(self.means3d + self.means3d) / div
         #print('sub:', sub)
         #print('div:', div)
         return (lines / div) - sub
@@ -297,6 +268,12 @@ class Dataset(Dataset):
         div = torch.tensor([r_std, g_std, b_std], dtype=torch.float32).view(3, 1, 1)
         return (rgb / div) - sub
 
+    def save_prediction_data(model_output):
+        pass
+
+    def save_prediction_visualization(model_output):
+        pass
+
     def __getitem__(self, index):
         """
         Returns one sample for training
@@ -306,81 +283,32 @@ class Dataset(Dataset):
         entry = self.entries[index]
 
         transform = np.array(entry['transform'])
-        #orig_transform = np.array(entry['orig_transform'])
-
-        #if gt_transform[0, 1] < 0.0:
-        #    gt_transform[:, :2] *= -1
-
-        #if self.split == 'train':
-        #    aug_transform = self.get_aug_transform()
-        #    transform = aug_transform @ gt_transform
-        #else:
-        #    transform = gt_transform
-
         transform = transform.astype(np.float32)
-
-        #rot = Rotation.from_matrix(transform[:3, :3])
-        #rotvec = torch.from_numpy(rot.as_rotvec())
-        #t = torch.from_numpy(transform[:3, 3])
 
         if self.preload:
             rgb = entry['rgb']
         else:
             rgb = self.load_rgb(entry)
 
-        if self.split == 'train':
-            rgb = self.aug(rgb, aug_transform)
-
         rgb = rgb.astype(np.float32)
 
-        #if self.noise_sigma is not None:
-        #    rgb += self.noise_sigma * np.random.randn(*rgb.shape)
-
-        #if self.use_cutout:
-        #    if np.random.rand() < self.cutout_prob:
-        #        rgb = self.cutout(rgb)
-
-        #visualize_xyz(rgb)
-
-        #return {'rgb': rgb, 'bin_rotvec': rotvec, 'bin_translation': t, 'bin_transform': torch.from_numpy(transform),
-        #        'orig_transform': torch.from_numpy(orig_transform), 'txt_path': entry['txt_path']}
-
         target = {}
-        lines = entry['lines']#[[0, 2]]
+        lines = entry['lines']
         target['image_id'] = torch.tensor(entry['sample_id'])
         target['labels'] = torch.tensor([0 for _ in lines], dtype=torch.int64)
         target['area'] = torch.tensor([1 for _ in lines])
         target['iscrowd'] = torch.tensor([0 for _ in lines])
         target['lines'] = torch.tensor(self.get_transformed_lines(lines, transform), dtype=torch.float32)
-        #target['exr_file'] = entry['exr_positions_path']
 
-        #print('Lines are', target['lines'])
-        #self.normalize_lines(target['lines'])
-        #exit()
-        #return self.normalize(torch.tensor(rgb)), target
-
-        #rgb = torch.tensor(rgb)
-
-        if True:
-            rgb = self.normalize_rgb(torch.tensor(rgb))
+        rgb = self.normalize_rgb(torch.tensor(rgb))
+        if self.normalize_output_3d_space:
             target['lines'] = self.normalize_lines(target['lines'])
-            entry['normalized'] = {'means': self.means, 'stds': self.stds}
-        else:
-            rgb = torch.tensor(rgb)
-            entry['normalized'] = {'means': [0.0, 0.0, 0.0], 'stds': [1.0, 1.0, 1.0]}
 
-        #print('target[\'lines\']', target['lines'][:2].view(2, 6))
-        #print(target['lines'][:1].shape)
-        #exit()
-        #target['lines'] = target['lines'][:2].view(2, 6)
+        entry['normalized'] = {
+            'means': self.means, 'stds': self.stds,
+            'means3d': self.means3d, 'stds3d': self.stds3d
+        }
 
-        #print('rgb shape', rgb.shape)
-
-        #visualize_xyz_with_lines(rgb.numpy(), target['lines'].numpy())
-
-        #exit()
-
-        #return torch.tensor(self.load_xyz(entry)), target
         return rgb, target, entry
 
 def build_mtevents_rgb(image_set, args):
@@ -399,13 +327,60 @@ if __name__ == '__main__':
     args = parser.parse_args()
     json_path = args.json
 
-    dataset = Dataset(args, json_path, 'val', 800, 600)
+    args.mtevents_rgb_subsample_batch = 1.0
 
-    print(dataset[0])
+    dataset = Dataset(args, json_path, 'val', 800, 600, preload=False)
+
+    #print(dataset[0])
 
     data_loader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=1)
 
     for item in data_loader:
+        #print(item)
+
+        rgbs, target, entries = item
+
+        rgb = rgbs[0]
+        rgb_orig = dataset.load_rgb({'img_path': entries['img_path'][0]})
+        camera_params = dataset.load_camera_params(entries['img_path'][0])
+        lines = target['lines'][0]
+        print('orig lines', entries['lines'][0])
+        print('transformed lines', lines)
+        lines = lines.reshape((8, 3))
+
+        orig_width, orig_height = entries['original_size']['width'][0], entries['original_size']['height'][0] #entries['original_size'].values()
+
+        camera_matrix = np.array(camera_params['camera_mtx_cam1'])
+        distortion_coefficients = np.array(camera_params['distortion_coeffs_cam1'])
+
+        lines_2d, _ = cv2.projectPoints(lines.numpy(), np.eye(3), np.zeros(3), camera_matrix,
+                                     distortion_coefficients)
+
+        img = np.moveaxis(rgb_orig, 0, -1)
+        img_h, img_w = img.shape[:2]
+        sx = img_w / orig_width
+        sy = img_h / orig_height
+        lines_2d = lines_2d * np.array([sx, sy])
+        for i in range(4):
+            p1 = tuple(np.round(lines_2d[2*i][0]).astype(int))
+            p2 = tuple(np.round(lines_2d[2*i+1][0]).astype(int))
+
+            print('Line from', p1, 'to', p2)
+
+            if 0 <= p1[0] < img_w and 0 <= p1[1] < img_h and 0 <= p2[0] < img_w and 0 <= p2[1] < img_h:
+                cv2.line(img, p1, p2, (0, 255, 0), 1, lineType=cv2.LINE_AA)
+                print('drawing')
+
+
+        print(entries['img_path'][0])
+        print('object id', entries['object_id'][0])
+
+        plt.imshow(rgb.moveaxis(0, -1))
+        plt.imshow(np.moveaxis(rgb_orig, 0, -1))
+        plt.show()
+
+
+
         #print(item['xyz'].size())
         #xyz = item['xyz'][0].cpu().detach().numpy()
 
@@ -416,4 +391,4 @@ if __name__ == '__main__':
         #ax.scatter(xyz[0].ravel(), xyz[1].ravel(), xyz[2].ravel(), marker='o')
 
         #plt.show()
-        pass
+        break

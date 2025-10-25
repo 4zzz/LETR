@@ -124,7 +124,7 @@ def main(args):
                     print(p, 'NEW parameter.  ')
             model_without_ddp.load_state_dict(new_state_dict, strict=False)
         else:
-            checkpoint = torch.load(args.resume, map_location='cpu')
+            checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
 
             # this is to compromise old implementation
             new_state_dict = {}

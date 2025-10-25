@@ -13,8 +13,15 @@ def read_transform_file(file):
         t = np.array([float(P[12]), float(P[13]), float(P[14])])
         return R, t
 
+def jsonify_value(v):
+    tolist = getattr(v, 'tolist', None)
+    if callable(tolist):
+        return tolist()
+    else:
+        return v
+
 def save_prediction_data(samples, outputs, targets,
-                         entry, bins_path, out_filename,
+                         entry, out_filename,
                          criterion=None, index=0):
     out_logits, out_line = outputs['pred_logits'][index].detach().cpu(), outputs['pred_lines'][index].detach().cpu()
 
@@ -24,19 +31,19 @@ def save_prediction_data(samples, outputs, targets,
     lines = out_line
     xyz, _ = samples.decompose()
 
-    ddir = os.path.dirname(bins_path)
-    gt_R1, gt_T = read_transform_file(os.path.join(ddir, entry[index]['txt_path']))
-    gt_R2 = np.matrix.copy(gt_R1)
-    gt_R2[:, :2] *= -1
+    #ddir = os.path.dirname(bins_path)
+    #gt_R1, gt_T = read_transform_file(os.path.join(ddir, entry[index]['txt_path']))
+    #gt_R2 = np.matrix.copy(gt_R1)
+    #gt_R2[:, :2] *= -1
 
     entry[index]['lines'] = entry[index]['lines'].tolist()
     data = {
-        'entry': {k:v for (k, v) in entry[index].items() if k != 'xyz'},
-        'gt_transform': {
-            'R1': gt_R1.tolist(),
-            'R2': gt_R2.tolist(),
-            'T': gt_T.tolist(),
-        },
+        'entry': {k:jsonify_value(v) for (k, v) in entry[index].items() if k != 'xyz'},
+        #'gt_transform': {
+        #    'R1': gt_R1.tolist(),
+        #    'R2': gt_R2.tolist(),
+        #    'T': gt_T.tolist(),
+        #},
         'targets': {key: value.tolist() for (key,value) in targets[index].items()},
         'prediction': {
             'scores': scores.tolist(),

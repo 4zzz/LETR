@@ -31,8 +31,8 @@ def save_prediction(args, epoch, entry, samples, outputs, targets, save_prob, sa
             save_prediction_visualization(samples, outputs, path, entry)
         if save_data:
             path = os.path.join(args.output_dir, subdir, 'vis-e' + str(epoch).rjust(len(str(args.epochs)), '0') + f'-f{saved_figs:03}.json')
-            print('Saving prediction data to')
-            save_prediction_data(samples, outputs, targets, entry, args.bins_path, path)
+            print('Saving prediction data to', path)
+            save_prediction_data(samples, outputs, targets, entry, path)
         saved_figs += 1
 
 
